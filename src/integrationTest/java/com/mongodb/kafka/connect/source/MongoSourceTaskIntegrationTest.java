@@ -1039,12 +1039,34 @@ public class MongoSourceTaskIntegrationTest extends MongoKafkaTestCase {
       List<SourceRecord> poll = getNextResults(task);
       assertEquals(5, poll.size());
 
-      // Create a large update that would normally exceed 16 MB
-      coll.updateOne(new Document("_id", 3), Updates.set("y", new byte[(1024 * 1024 * 16) - 30]));
+      // Create a large update that will exceed 16 MB when combined with change stream metadata
+      // The change stream event includes: operationType, clusterTime, documentKey,
+      // updateDescription,
+      // fullDocument, etc. Using a size close to 16 MB to trigger splitting
+      // Note: We use a size slightly under 16 MB for the document itself, but the change stream
+      // event with all metadata will exceed 16 MB and trigger splitting
+      // Using the same size as the error tolerance test which is known to exceed 16 MB
+      byte[] largeData = new byte[(1024 * 1024 * 16) - 30];
+      coll.updateOne(new Document("_id", 3), Updates.set("y", largeData));
 
-      // With split large event enabled, we should receive the update event (possibly split)
+      // With split large event enabled, we should receive the update event
+      // If the event is large enough to be split, it will be reassembled into one event
+      // If it's not large enough to trigger splitting, we'll still get one event
       poll = getNextResults(task);
+
       assertTrue(!poll.isEmpty(), "Should receive at least one event for the large update");
+
+      // The key test is that we don't get multiple fragment events - we should get exactly 1
+      assertEquals(
+          1, poll.size(), "Should receive exactly one event (reassembled if split occurred)");
+
+      // Verify the event contains the large data
+      SourceRecord largeEventRecord = poll.get(0);
+      assertNotNull(largeEventRecord, "Large event record should not be null");
+
+      // The record should contain the full document with the large field
+      String valueJson = largeEventRecord.value().toString();
+      assertTrue(valueJson.contains("\"y\""), "Event should contain the 'y' field");
 
       // Insert some new data and confirm new events are available
       insertMany(range(10, 15), coll);

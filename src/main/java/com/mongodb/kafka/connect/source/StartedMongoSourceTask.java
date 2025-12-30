@@ -88,6 +88,7 @@ import com.mongodb.kafka.connect.source.heartbeat.HeartbeatManager;
 import com.mongodb.kafka.connect.source.producer.SchemaAndValueProducer;
 import com.mongodb.kafka.connect.source.statistics.StatisticsManager;
 import com.mongodb.kafka.connect.source.topic.mapping.TopicMapper;
+import com.mongodb.kafka.connect.util.SplitEventReassembler;
 import com.mongodb.kafka.connect.util.VisibleForTesting;
 import com.mongodb.kafka.connect.util.jmx.SourceTaskStatistics;
 import com.mongodb.kafka.connect.util.time.InnerOuterTimer;
@@ -138,6 +139,7 @@ final class StartedMongoSourceTask implements AutoCloseable {
   @Nullable private MongoChangeStreamCursor<? extends BsonDocument> cursor;
   private final StatisticsManager statisticsManager;
   private final InnerOuterTimer inTaskPollInConnectFrameworkTimer;
+  @Nullable private final SplitEventReassembler splitEventReassembler;
 
   StartedMongoSourceTask(
       final Supplier<SourceTaskContext> sourceTaskContextAccessor,
@@ -163,6 +165,8 @@ final class StartedMongoSourceTask implements AutoCloseable {
       initializeCursorAndHeartbeatManager();
     }
     this.statisticsManager = statisticsManager;
+    this.splitEventReassembler =
+        sourceConfig.getSplitLargeEvent() ? new SplitEventReassembler() : null;
     inTaskPollInConnectFrameworkTimer =
         InnerOuterTimer.start(
             (inTaskPollSample) -> {
@@ -606,9 +610,21 @@ final class StartedMongoSourceTask implements AutoCloseable {
       do {
         next = cursor.tryNext();
         if (next != null) {
-          batch.add(next);
+          // Process through reassembler if split large event is enabled
+          if (splitEventReassembler != null) {
+            BsonDocument reassembled = splitEventReassembler.process(next);
+            if (reassembled != null) {
+              batch.add(reassembled);
+            }
+            // If reassembled is null, we're collecting fragments - continue reading
+          } else {
+            batch.add(next);
+          }
         }
-      } while (next != null && batch.size() < maxBatchSize && cursor.available() > 0);
+      } while (next != null
+          && batch.size() < maxBatchSize
+          && (cursor.available() > 0
+              || (splitEventReassembler != null && splitEventReassembler.isCollecting())));
     } catch (MongoException e) {
       closeCursor();
       if (isRunning) {
