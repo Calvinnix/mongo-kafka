@@ -19,6 +19,8 @@ package com.mongodb.kafka.connect.sink;
 
 import static com.mongodb.kafka.connect.sink.MongoSinkTask.LOGGER;
 import static com.mongodb.kafka.connect.sink.MongoSinkTopicConfig.BULK_WRITE_ORDERED_CONFIG;
+import static com.mongodb.kafka.connect.sink.MongoSinkTopicConfig.PROCESSING_PARALLELISM_CONFIG;
+import static com.mongodb.kafka.connect.sink.MongoSinkTopicConfig.PROCESSING_QUEUE_SIZE_CONFIG;
 import static com.mongodb.kafka.connect.util.TimeseriesValidation.validateCollection;
 
 import java.util.Collection;
@@ -55,6 +57,7 @@ final class StartedMongoSinkTask implements AutoCloseable {
   private final MongoClient mongoClient;
   private final ErrorReporter errorReporter;
   private final Set<MongoNamespace> checkedTimeseriesNamespaces;
+  private final ParallelRecordProcessor parallelRecordProcessor;
 
   private final SinkTaskStatistics statistics;
   private final InnerOuterTimer inTaskPutInConnectFrameworkTimer;
@@ -67,6 +70,11 @@ final class StartedMongoSinkTask implements AutoCloseable {
     this.mongoClient = mongoClient;
     this.errorReporter = errorReporter;
     checkedTimeseriesNamespaces = new HashSet<>();
+
+    int parallelism = sinkConfig.getInt(PROCESSING_PARALLELISM_CONFIG);
+    int queueSize = sinkConfig.getInt(PROCESSING_QUEUE_SIZE_CONFIG);
+    this.parallelRecordProcessor = new ParallelRecordProcessor(parallelism, queueSize, sinkConfig);
+
     statistics = new SinkTaskStatistics(getMBeanName());
     statistics.register();
     inTaskPutInConnectFrameworkTimer =
@@ -95,7 +103,8 @@ final class StartedMongoSinkTask implements AutoCloseable {
   @SuppressWarnings("try")
   @Override
   public void close() {
-    try (MongoClient autoCloseable = mongoClient) {
+    try (MongoClient autoCloseableClient = mongoClient;
+        ParallelRecordProcessor autoCloseableProcessor = parallelRecordProcessor) {
       statistics.unregister();
     }
   }
@@ -110,9 +119,12 @@ final class StartedMongoSinkTask implements AutoCloseable {
         LOGGER.debug("No sink records to process for current poll operation");
       } else {
         Timer processingTime = Timer.start();
+        // Process records (potentially in parallel) and group by topic/namespace
+        List<MongoProcessedSinkRecordData> processedRecords =
+            parallelRecordProcessor.process(records);
         List<List<MongoProcessedSinkRecordData>> batches =
             MongoSinkRecordProcessor.orderedGroupByTopicAndNamespace(
-                records, sinkConfig, errorReporter);
+                processedRecords, errorReporter);
         statistics.getProcessingPhases().sample(processingTime.getElapsedTime().toMillis());
         for (List<MongoProcessedSinkRecordData> batch : batches) {
           bulkWriteBatch(batch);

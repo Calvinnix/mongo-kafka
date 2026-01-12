@@ -205,6 +205,23 @@ public class MongoSinkTopicConfig extends AbstractConfig {
           + "(NO rate limiting if n=0)";
   private static final int RATE_LIMITING_EVERY_N_DEFAULT = 0;
 
+  // Parallel processing
+  public static final String PROCESSING_PARALLELISM_CONFIG = "processing.parallelism";
+  private static final String PROCESSING_PARALLELISM_DISPLAY = "Processing parallelism";
+  private static final String PROCESSING_PARALLELISM_DOC =
+      "Number of threads to use for parallel document processing (BSON encoding, "
+          + "post-processing, WriteModel creation). Set to 1 to disable parallel processing. "
+          + "Higher values can improve throughput on multi-core systems when processing is CPU-bound.";
+  private static final int PROCESSING_PARALLELISM_DEFAULT = 1;
+
+  public static final String PROCESSING_QUEUE_SIZE_CONFIG = "processing.queue.size";
+  private static final String PROCESSING_QUEUE_SIZE_DISPLAY = "Processing queue size";
+  private static final String PROCESSING_QUEUE_SIZE_DOC =
+      "Size of the work queue for parallel processing. Only applies when "
+          + "'processing.parallelism' > 1. If the queue fills up, the calling thread will "
+          + "process records directly to provide backpressure.";
+  private static final int PROCESSING_QUEUE_SIZE_DEFAULT = 1000;
+
   // Post processing
   public static final String POST_PROCESSOR_CHAIN_CONFIG = "post.processor.chain";
   private static final String POST_PROCESSOR_CHAIN_DISPLAY = "The post processor chain";
@@ -886,6 +903,28 @@ public class MongoSinkTopicConfig extends AbstractConfig {
         ++orderInGroup,
         ConfigDef.Width.MEDIUM,
         RATE_LIMITING_EVERY_N_DISPLAY);
+    configDef.define(
+        PROCESSING_PARALLELISM_CONFIG,
+        ConfigDef.Type.INT,
+        PROCESSING_PARALLELISM_DEFAULT,
+        ConfigDef.Range.atLeast(1),
+        ConfigDef.Importance.MEDIUM,
+        PROCESSING_PARALLELISM_DOC,
+        group,
+        ++orderInGroup,
+        ConfigDef.Width.MEDIUM,
+        PROCESSING_PARALLELISM_DISPLAY);
+    configDef.define(
+        PROCESSING_QUEUE_SIZE_CONFIG,
+        ConfigDef.Type.INT,
+        PROCESSING_QUEUE_SIZE_DEFAULT,
+        ConfigDef.Range.atLeast(1),
+        ConfigDef.Importance.LOW,
+        PROCESSING_QUEUE_SIZE_DOC,
+        group,
+        ++orderInGroup,
+        ConfigDef.Width.MEDIUM,
+        PROCESSING_QUEUE_SIZE_DISPLAY);
 
     group = "Post Processing";
     orderInGroup = 0;

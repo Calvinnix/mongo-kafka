@@ -31,20 +31,51 @@ import com.mongodb.kafka.connect.sink.dlq.ErrorReporter;
 final class MongoSinkRecordProcessor {
   private static final Logger LOGGER = LoggerFactory.getLogger(MongoSinkRecordProcessor.class);
 
+  /**
+   * Processes raw SinkRecords into MongoProcessedSinkRecordData and groups them by topic/namespace.
+   *
+   * <p>This method processes records sequentially. For parallel processing, use {@link
+   * ParallelRecordProcessor} followed by {@link #orderedGroupByTopicAndNamespace(List,
+   * ErrorReporter)}.
+   *
+   * @param records The raw sink records to process
+   * @param sinkConfig The sink configuration
+   * @param errorReporter Error reporter for handling processing errors
+   * @return Ordered list of batches grouped by topic and namespace
+   */
   static List<List<MongoProcessedSinkRecordData>> orderedGroupByTopicAndNamespace(
       final Collection<SinkRecord> records,
       final MongoSinkConfig sinkConfig,
       final ErrorReporter errorReporter) {
     LOGGER.debug("Number of sink records to process: {}", records.size());
 
+    List<MongoProcessedSinkRecordData> processedRecords = new ArrayList<>(records.size());
+    for (SinkRecord record : records) {
+      processedRecords.add(new MongoProcessedSinkRecordData(record, sinkConfig));
+    }
+
+    return orderedGroupByTopicAndNamespace(processedRecords, errorReporter);
+  }
+
+  /**
+   * Groups pre-processed records by topic and namespace.
+   *
+   * <p>This overload accepts already-processed records, allowing the processing step to be
+   * performed separately (e.g., in parallel via {@link ParallelRecordProcessor}).
+   *
+   * @param processedRecords The pre-processed records
+   * @param errorReporter Error reporter for handling processing errors
+   * @return Ordered list of batches grouped by topic and namespace
+   */
+  static List<List<MongoProcessedSinkRecordData>> orderedGroupByTopicAndNamespace(
+      final List<MongoProcessedSinkRecordData> processedRecords,
+      final ErrorReporter errorReporter) {
+
     List<List<MongoProcessedSinkRecordData>> orderedProcessedSinkRecordData = new ArrayList<>();
     List<MongoProcessedSinkRecordData> currentGroup = new ArrayList<>();
     MongoProcessedSinkRecordData previous = null;
 
-    for (SinkRecord record : records) {
-      MongoProcessedSinkRecordData processedData =
-          new MongoProcessedSinkRecordData(record, sinkConfig);
-
+    for (MongoProcessedSinkRecordData processedData : processedRecords) {
       if (processedData.getException() != null) {
         errorReporter.report(processedData.getSinkRecord(), processedData.getException());
         continue;
