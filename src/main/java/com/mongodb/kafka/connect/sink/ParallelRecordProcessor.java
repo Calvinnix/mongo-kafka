@@ -122,15 +122,16 @@ final class ParallelRecordProcessor implements AutoCloseable {
                     CompletableFuture.supplyAsync(
                         () ->
                             new IndexedProcessedRecord(
-                                ir.index, new MongoProcessedSinkRecordData(ir.record, sinkConfig)),
+                                ir.getIndex(),
+                                new MongoProcessedSinkRecordData(ir.getRecord(), sinkConfig)),
                         executor))
             .collect(Collectors.toList());
 
     // Wait for all to complete and restore original order
     return futures.stream()
         .map(CompletableFuture::join)
-        .sorted(Comparator.comparingInt(ipr -> ipr.index))
-        .map(ipr -> ipr.processed)
+        .sorted(Comparator.comparingInt(IndexedProcessedRecord::getIndex))
+        .map(IndexedProcessedRecord::getProcessed)
         .collect(Collectors.toList());
   }
 
@@ -161,23 +162,39 @@ final class ParallelRecordProcessor implements AutoCloseable {
 
   // Helper class to track original record index
   private static final class IndexedRecord {
-    final int index;
-    final SinkRecord record;
+    private final int index;
+    private final SinkRecord record;
 
     IndexedRecord(final int index, final SinkRecord record) {
       this.index = index;
       this.record = record;
     }
+
+    int getIndex() {
+      return index;
+    }
+
+    SinkRecord getRecord() {
+      return record;
+    }
   }
 
   // Helper class to track processed record with original index
   private static final class IndexedProcessedRecord {
-    final int index;
-    final MongoProcessedSinkRecordData processed;
+    private final int index;
+    private final MongoProcessedSinkRecordData processed;
 
     IndexedProcessedRecord(final int index, final MongoProcessedSinkRecordData processed) {
       this.index = index;
       this.processed = processed;
+    }
+
+    int getIndex() {
+      return index;
+    }
+
+    MongoProcessedSinkRecordData getProcessed() {
+      return processed;
     }
   }
 }
