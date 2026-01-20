@@ -18,6 +18,8 @@
 package com.mongodb.kafka.connect.sink;
 
 import static com.mongodb.kafka.connect.sink.MongoSinkTask.LOGGER;
+import static com.mongodb.kafka.connect.sink.MongoSinkTopicConfig.BATCH_UPLOAD_PARALLELISM_CONFIG;
+import static com.mongodb.kafka.connect.sink.MongoSinkTopicConfig.BATCH_UPLOAD_QUEUE_SIZE_CONFIG;
 import static com.mongodb.kafka.connect.sink.MongoSinkTopicConfig.BULK_WRITE_ORDERED_CONFIG;
 import static com.mongodb.kafka.connect.sink.MongoSinkTopicConfig.PROCESSING_PARALLELISM_CONFIG;
 import static com.mongodb.kafka.connect.sink.MongoSinkTopicConfig.PROCESSING_QUEUE_SIZE_CONFIG;
@@ -58,6 +60,7 @@ final class StartedMongoSinkTask implements AutoCloseable {
   private final ErrorReporter errorReporter;
   private final Set<MongoNamespace> checkedTimeseriesNamespaces;
   private final ParallelRecordProcessor parallelRecordProcessor;
+  private final ParallelBatchUploader parallelBatchUploader;
 
   private final SinkTaskStatistics statistics;
   private final InnerOuterTimer inTaskPutInConnectFrameworkTimer;
@@ -74,6 +77,12 @@ final class StartedMongoSinkTask implements AutoCloseable {
     int parallelism = sinkConfig.getInt(PROCESSING_PARALLELISM_CONFIG);
     int queueSize = sinkConfig.getInt(PROCESSING_QUEUE_SIZE_CONFIG);
     this.parallelRecordProcessor = new ParallelRecordProcessor(parallelism, queueSize, sinkConfig);
+
+    int batchUploadParallelism = sinkConfig.getInt(BATCH_UPLOAD_PARALLELISM_CONFIG);
+    int batchUploadQueueSize = sinkConfig.getInt(BATCH_UPLOAD_QUEUE_SIZE_CONFIG);
+    boolean bulkWriteOrdered = sinkConfig.getBoolean(BULK_WRITE_ORDERED_CONFIG);
+    this.parallelBatchUploader =
+        new ParallelBatchUploader(batchUploadParallelism, batchUploadQueueSize, bulkWriteOrdered);
 
     statistics = new SinkTaskStatistics(getMBeanName());
     statistics.register();
@@ -104,7 +113,8 @@ final class StartedMongoSinkTask implements AutoCloseable {
   @Override
   public void close() {
     try (MongoClient autoCloseableClient = mongoClient;
-        ParallelRecordProcessor autoCloseableProcessor = parallelRecordProcessor) {
+        ParallelRecordProcessor autoCloseableProcessor = parallelRecordProcessor;
+        ParallelBatchUploader autoCloseableUploader = parallelBatchUploader) {
       statistics.unregister();
     }
   }
@@ -126,9 +136,8 @@ final class StartedMongoSinkTask implements AutoCloseable {
             MongoSinkRecordProcessor.orderedGroupByTopicAndNamespace(
                 processedRecords, errorReporter);
         statistics.getProcessingPhases().sample(processingTime.getElapsedTime().toMillis());
-        for (List<MongoProcessedSinkRecordData> batch : batches) {
-          bulkWriteBatch(batch);
-        }
+        // Upload batches (potentially in parallel if unordered writes are enabled)
+        parallelBatchUploader.uploadBatches(batches, this::bulkWriteBatch);
       }
     }
   }

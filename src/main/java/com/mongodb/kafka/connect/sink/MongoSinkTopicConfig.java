@@ -222,6 +222,24 @@ public class MongoSinkTopicConfig extends AbstractConfig {
           + "process records directly to provide backpressure.";
   private static final int PROCESSING_QUEUE_SIZE_DEFAULT = 1000;
 
+  // Parallel batch upload
+  public static final String BATCH_UPLOAD_PARALLELISM_CONFIG = "batch.upload.parallelism";
+  private static final String BATCH_UPLOAD_PARALLELISM_DISPLAY = "Batch upload parallelism";
+  private static final String BATCH_UPLOAD_PARALLELISM_DOC =
+      "Number of threads to use for parallel batch uploads to MongoDB. Set to 1 to disable "
+          + "parallel batch uploads. Higher values can improve throughput when uploading to MongoDB. "
+          + "Note: This setting is automatically set to 1 if 'bulk.write.ordered' is true to "
+          + "preserve write ordering.";
+  private static final int BATCH_UPLOAD_PARALLELISM_DEFAULT = 1;
+
+  public static final String BATCH_UPLOAD_QUEUE_SIZE_CONFIG = "batch.upload.queue.size";
+  private static final String BATCH_UPLOAD_QUEUE_SIZE_DISPLAY = "Batch upload queue size";
+  private static final String BATCH_UPLOAD_QUEUE_SIZE_DOC =
+      "Size of the work queue for parallel batch uploads. Only applies when "
+          + "'batch.upload.parallelism' > 1 and 'bulk.write.ordered' is false. "
+          + "If the queue fills up, the calling thread will upload batches directly to provide backpressure.";
+  private static final int BATCH_UPLOAD_QUEUE_SIZE_DEFAULT = 100;
+
   // Post processing
   public static final String POST_PROCESSOR_CHAIN_CONFIG = "post.processor.chain";
   private static final String POST_PROCESSOR_CHAIN_DISPLAY = "The post processor chain";
@@ -925,6 +943,28 @@ public class MongoSinkTopicConfig extends AbstractConfig {
         ++orderInGroup,
         ConfigDef.Width.MEDIUM,
         PROCESSING_QUEUE_SIZE_DISPLAY);
+    configDef.define(
+        BATCH_UPLOAD_PARALLELISM_CONFIG,
+        ConfigDef.Type.INT,
+        BATCH_UPLOAD_PARALLELISM_DEFAULT,
+        ConfigDef.Range.atLeast(1),
+        ConfigDef.Importance.MEDIUM,
+        BATCH_UPLOAD_PARALLELISM_DOC,
+        group,
+        ++orderInGroup,
+        ConfigDef.Width.MEDIUM,
+        BATCH_UPLOAD_PARALLELISM_DISPLAY);
+    configDef.define(
+        BATCH_UPLOAD_QUEUE_SIZE_CONFIG,
+        ConfigDef.Type.INT,
+        BATCH_UPLOAD_QUEUE_SIZE_DEFAULT,
+        ConfigDef.Range.atLeast(1),
+        ConfigDef.Importance.LOW,
+        BATCH_UPLOAD_QUEUE_SIZE_DOC,
+        group,
+        ++orderInGroup,
+        ConfigDef.Width.MEDIUM,
+        BATCH_UPLOAD_QUEUE_SIZE_DISPLAY);
 
     group = "Post Processing";
     orderInGroup = 0;
